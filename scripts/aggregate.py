@@ -15,18 +15,22 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "..", "data")
 
-# Repos that match an agent keyword somewhere in name/description/topics.
-AGENT_HINT = re.compile(
-    r"\b(agent|agents|agentic|mcp|model context protocol|autonomous|autogpt|crew|"
-    r"copilot|assistant|tool[- ]?use|tool[- ]?calling|function[- ]?calling|"
-    r"multi[- ]?agent|swarm|sandbox|llmops|rag|orchestrat|workflow autom|"
-    r"computer use|browser use|deep research|memory for llm|eval)\b",
+# Repos that plausibly belong in an *agent* list: the word must appear in the name,
+# description or topics (not merely in a README).
+STRONG = re.compile(r"\b(agent|agents|agentic|multi-agent|mcp)\b", re.I)
+HINT = re.compile(
+    r"\b(agent|agents|agentic|mcp|model context protocol|autonomous|autogpt|"
+    r"copilot|tool[- ]?use|tool[- ]?calling|function[- ]?calling|swarm|"
+    r"computer use|browser use|deep research)\b",
     re.I,
 )
-
-# Noise: repos that merely mention "agent" in passing.
+# Noise: non-agent repos that happen to match, plus non-English interview dumps.
 EXCLUDE_NAME = re.compile(
-    r"^(awesome-.*|.*-roadmap|.*-cheatsheet|interview|leetcode|.*-ctf|hacktoberfest)$", re.I
+    r"^(awesome-.*|.*-roadmap|.*-cheatsheet|interview|leetcode|.*-ctf|hacktoberfest|"
+    r"javaguide|.*-guide-zh|.*-notes|free-.*-books)$", re.I
+)
+NON_AGENT = re.compile(
+    r"(面试|八股|curriculum vitae|mybatis|spring boot 教程|kubernetes 教程)", re.I
 )
 
 
@@ -72,13 +76,23 @@ def main() -> None:
 
     kept = []
     for key, r in repos.items():
+        r["matched_queries"] = sorted(set(seen_in[key]))
+        r["acm"] = len(r["matched_queries"])
         haystack = f'{r["name"]} {r["description"]} {" ".join(r["topics"])}'
-        if not AGENT_HINT.search(haystack):
+        mq = r["matched_queries"]
+        # A repo found through a specific agent/MCP topic query is relevant by construction.
+        topic_hit = any(
+            q.startswith("topic:") and re.search(r"agent|mcp|llmops|computer-use|browser-agent",
+                                                 q, re.I)
+            for q in mq
+        )
+        text_hit = bool(STRONG.search(haystack) and HINT.search(haystack))
+        if not (topic_hit or text_hit or len(mq) >= 3):
             continue
         if EXCLUDE_NAME.match(r["name"]) and r["stars"] < 20000:
             continue
-        r["matched_queries"] = sorted(set(seen_in[key]))
-        r["acm"] = len(r["matched_queries"])
+        if NON_AGENT.search(haystack):
+            continue
         kept.append(r)
 
     kept.sort(key=lambda r: (-r["stars"], r["full_name"]))
